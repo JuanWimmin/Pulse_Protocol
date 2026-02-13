@@ -1,0 +1,16 @@
+[package]
+name = "pulse-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+pulse-vault = { path = "../vault" }
+pulse-proof-of-life = { path = "../proof-of-life" }
+pulse-beneficiary = { path = "../beneficiary" }
+pulse-document-registry = { path = "../document-registry" }
