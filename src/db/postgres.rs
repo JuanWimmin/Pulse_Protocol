@@ -17,5 +17,5 @@ pub async fn run_migrati>: &PgPool) {
     sqlx::migrate!("./migrations")
         .run(pool)
         .await
-        .expect("Failed to run migrati>;
+        .expect("Failed to run migrations");
 }
