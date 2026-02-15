@@ -3,141 +3,100 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::types::*;
-
-#[derive(sqlx::FromRow)]
-struct UserIdRow { id: Uuid }
+use crate::auth::AuthenticatedUser;
+use crate::models;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+
+/// Helper: convert DB beneficiaries to GQL type.
+fn to_gql_beneficiaries(db: Vec<models::beneficiary::Beneficiary>) -> Vec<Beneficiary> {
+    db.into_iter()
+        .map(|b| Beneficiary {
+            address: b.stellar_address,
+            percentage: b.percentage,
+            claimed: b.claimed,
+            claimed_at: b.claimed_at,
+        })
+        .collect()
+}
+
+/// Helper: build GQL Vault from DB models.
+async fn build_vault(
+    pool: &PgPool,
+    v: models::vault::Vault,
+) -> Result<Vault> {
+    let owner = models::user::User::find_by_id(pool, v.owner_id)
+        .await?
+        .map(|u| u.stellar_address)
+        .unwrap_or_default();
+    let beneficiaries = models::beneficiary::Beneficiary::find_by_vault(pool, v.id).await?;
+
+    Ok(Vault {
+        id: v.id,
+        contract_id: v.contract_id,
+        owner,
+        status: VaultStatus::from_db(&v.status),
+        beneficiaries: to_gql_beneficiaries(beneficiaries),
+        balance: vec![], // Sprint 2: fetch from on-chain via wrappers
+        escrow_contract: v.escrow_contract_id,
+        created_at: v.created_at,
+    })
+}
 
 pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
-    /// Get user by Stellar address
-    async fn user(&self, ctx: &Context<'_>, stellar_address: String) -> Result<Option<User>> {
-        let pool = ctx.data::<PgPool>()?;
-        let user = sqlx::query_as::<_, User>(
-            r#"SELECT id, stellar_address, created_at, calibration_complete, calibration_started_at
-               FROM users WHERE stellar_address = $1"#,
-        )
-        .bind(&stellar_address)
-        .fetch_optional(pool)
-        .await?;
-        Ok(user)
-    }
-
-    /// Get vault by ID
+    /// Get vault by ID.
     async fn vault(&self, ctx: &Context<'_>, id: Uuid) -> Result<Option<Vault>> {
         let pool = ctx.data::<PgPool>()?;
-        let vault = sqlx::query_as::<_, Vault>(
-            r#"SELECT id, contract_vault_id, owner_id, token_address, status, balance,
-                      escrow_contract, created_at, last_synced_at
-               FROM vaults WHERE id = $1"#,
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-        Ok(vault)
-    }
-
-    /// Get all vaults for a user
-    async fn user_vaults(&self, ctx: &Context<'_>, stellar_address: String) -> Result<Vec<Vault>> {
-        let pool = ctx.data::<PgPool>()?;
-        let vaults = sqlx::query_as::<_, Vault>(
-            r#"SELECT v.id, v.contract_vault_id, v.owner_id, v.token_address, v.status,
-                      v.balance, v.escrow_contract, v.created_at, v.last_synced_at
-               FROM vaults v JOIN users u ON v.owner_id = u.id
-               WHERE u.stellar_address = $1"#,
-        )
-        .bind(&stellar_address)
-        .fetch_all(pool)
-        .await?;
-        Ok(vaults)
-    }
-
-    /// Get beneficiaries for a vault
-    async fn vault_beneficiaries(&self, ctx: &Context<'_>, vault_id: Uuid) -> Result<Vec<Beneficiary>> {
-        let pool = ctx.data::<PgPool>()?;
-        let beneficiaries = sqlx::query_as::<_, Beneficiary>(
-            r#"SELECT id, vault_id, stellar_address, percentage, claimed, claimed_at
-               FROM beneficiaries WHERE vault_id = $1"#,
-        )
-        .bind(vault_id)
-        .fetch_all(pool)
-        .await?;
-        Ok(beneficiaries)
-    }
-
-    /// Get documents for a user
-    async fn user_documents(&self, ctx: &Context<'_>, stellar_address: String) -> Result<Vec<Document>> {
-        let pool = ctx.data::<PgPool>()?;
-        let documents = sqlx::query_as::<_, Document>(
-            r#"SELECT d.id, d.owner_id, d.vault_id, d.ipfs_cid, d.doc_hash, d.doc_type,
-                      d.is_encrypted, d.metadata, d.contract_doc_id, d.registered_at
-               FROM documents d JOIN users u ON d.owner_id = u.id
-               WHERE u.stellar_address = $1"#,
-        )
-        .bind(&stellar_address)
-        .fetch_all(pool)
-        .await?;
-        Ok(documents)
-    }
-
-    /// Get verification history for a user
-    async fn user_verifications(&self, ctx: &Context<'_>, stellar_address: String) -> Result<Vec<VerificationRecord>> {
-        let pool = ctx.data::<PgPool>()?;
-        let verifications = sqlx::query_as::<_, VerificationRecord>(
-            r#"SELECT v.id, v.user_id, v.score, v.source, v.face_match_score, v.face_liveness_score,
-                      v.fingerprint_frequency, v.fingerprint_count, v.time_of_day_normality,
-                      v.typing_pattern_match, v.app_usage_match, v.movement_pattern_match,
-                      v.days_since_last_verify, v.session_duration, v.perceptron_score, v.hash, v.created_at
-               FROM verifications v JOIN users u ON v.user_id = u.id
-               WHERE u.stellar_address = $1 ORDER BY v.created_at DESC"#,
-        )
-        .bind(&stellar_address)
-        .fetch_all(pool)
-        .await?;
-        Ok(verifications)
-    }
-
-    /// Get current liveness data for a user
-    async fn liveness_status(&self, ctx: &Context<'_>, stellar_address: String) -> Result<Option<LivenessData>> {
-        let pool = ctx.data::<PgPool>()?;
-        let user = sqlx::query_as::<_, User>(
-            "SELECT id, stellar_address, created_at, calibration_complete, calibration_started_at FROM users WHERE stellar_address = $1",
-        )
-        .bind(&stellar_address)
-        .fetch_optional(pool)
-        .await?;
-        let user = match user {
-            Some(u) => u,
-            None => return Ok(None),
-        };
-        #[derive(sqlx::FromRow)]
-        struct LivenessRow { score: i32, created_at: chrono::DateTime<chrono::Utc>, total_count: Option<i64> }
-        let latest = sqlx::query_as::<_, LivenessRow>(
-            r#"SELECT score, created_at, COUNT(*) OVER() as total_count
-               FROM verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1"#,
-        )
-        .bind(user.id)
-        .fetch_optional(pool)
-        .await?;
-        match latest {
-            Some(v) => Ok(Some(LivenessData {
-                user_id: user.id,
-                current_score: v.score,
-                last_verification: v.created_at,
-                verification_count: v.total_count.unwrap_or(0) as i32,
-                calibration_complete: user.calibration_complete,
-            })),
-            None => Ok(Some(LivenessData {
-                user_id: user.id,
-                current_score: 0,
-                last_verification: user.created_at,
-                verification_count: 0,
-                calibration_complete: user.calibration_complete,
-            })),
+        match models::vault::Vault::find_by_id(pool, id).await? {
+            Some(v) => Ok(Some(build_vault(pool, v).await?)),
+            None => Ok(None),
         }
+    }
+
+    /// Get all vaults for the authenticated user.
+    async fn my_vaults(&self, ctx: &Context<'_>) -> Result<Vec<Vault>> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+        let vaults = models::vault::Vault::find_by_owner(pool, auth.user_id).await?;
+        let mut result = Vec::new();
+        for v in vaults {
+            result.push(build_vault(pool, v).await?);
+        }
+        Ok(result)
+    }
+
+    /// Get liveness score for a user.
+    async fn liveness_score(
+        &self,
+        ctx: &Context<'_>,
+        user_id: Uuid,
+    ) -> Result<Option<LivenessData>> {
+        let pool = ctx.data::<PgPool>()?;
+        match models::verification::Verification::latest(pool, user_id).await? {
+            Some(v) => {
+                let count = models::verification::Verification::count(pool, user_id).await?;
+                Ok(Some(LivenessData {
+                    score: v.score,
+                    last_verified: v.created_at,
+                    total_verifications: count as i32,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get beneficiaries for a vault.
+    async fn beneficiaries(
+        &self,
+        ctx: &Context<'_>,
+        vault_id: Uuid,
+    ) -> Result<Vec<Beneficiary>> {
+        let pool = ctx.data::<PgPool>()?;
+        let db = models::beneficiary::Beneficiary::find_by_vault(pool, vault_id).await?;
+        Ok(to_gql_beneficiaries(db))
     }
 }
 
@@ -145,114 +104,203 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
-    /// Create a new user
-    async fn create_user(&self, ctx: &Context<'_>, stellar_address: String) -> Result<User> {
+    /// Create a new vault.
+    async fn create_vault(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] _input: CreateVaultInput,
+    ) -> Result<Vault> {
         let pool = ctx.data::<PgPool>()?;
-        let user = sqlx::query_as::<_, User>(
-            r#"INSERT INTO users (stellar_address) VALUES ($1)
-               RETURNING id, stellar_address, created_at, calibration_complete, calibration_started_at"#,
-        )
-        .bind(&stellar_address)
-        .fetch_one(pool)
-        .await?;
-        Ok(user)
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        // Sprint 1: DB only. Sprint 2 adds on-chain create_vault + create_escrow.
+        let vault = models::vault::Vault::create(pool, auth.user_id).await?;
+
+        Ok(Vault {
+            id: vault.id,
+            contract_id: vault.contract_id,
+            owner: auth.stellar_address.clone(),
+            status: VaultStatus::from_db(&vault.status),
+            beneficiaries: vec![],
+            balance: vec![],
+            escrow_contract: vault.escrow_contract_id,
+            created_at: vault.created_at,
+        })
     }
 
-    /// Create a new vault
-    async fn create_vault(&self, ctx: &Context<'_>, input: CreateVaultInput) -> Result<Vault> {
+    /// Deposit funds into a vault.
+    async fn deposit(
+        &self,
+        ctx: &Context<'_>,
+        vault_id: Uuid,
+        amount: String,
+        token: String,
+    ) -> Result<TransactionResult> {
         let pool = ctx.data::<PgPool>()?;
-        let user = sqlx::query_as::<_, UserIdRow>("SELECT id FROM users WHERE stellar_address = $1")
-            .bind(&input.stellar_address)
-            .fetch_one(pool)
-            .await?;
-        let vault = sqlx::query_as::<_, Vault>(
-            r#"INSERT INTO vaults (owner_id, token_address) VALUES ($1, $2)
-               RETURNING id, contract_vault_id, owner_id, token_address, status, balance,
-                         escrow_contract, created_at, last_synced_at"#,
-        )
-        .bind(user.id)
-        .bind(&input.token_address)
-        .fetch_one(pool)
-        .await?;
-        Ok(vault)
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        let vault = models::vault::Vault::find_by_id(pool, vault_id)
+            .await?
+            .ok_or("Vault not found")?;
+
+        if vault.owner_id != auth.user_id {
+            return Err("Not authorized".into());
+        }
+
+        // Sprint 1: Mock. Sprint 2 calls deposit() + fund_escrow() on-chain.
+        Ok(TransactionResult {
+            success: true,
+            tx_hash: None,
+            message: format!(
+                "Deposit of {} {} queued (on-chain pending)",
+                amount, token
+            ),
+        })
     }
 
-    /// Add beneficiary to vault
-    async fn add_beneficiary(&self, ctx: &Context<'_>, vault_id: Uuid, beneficiary: BeneficiaryInput) -> Result<Beneficiary> {
+    /// Set beneficiaries for a vault (replaces existing).
+    async fn set_beneficiaries(
+        &self,
+        ctx: &Context<'_>,
+        vault_id: Uuid,
+        beneficiaries: Vec<BeneficiaryInput>,
+    ) -> Result<Vec<Beneficiary>> {
         let pool = ctx.data::<PgPool>()?;
-        let new_beneficiary = sqlx::query_as::<_, Beneficiary>(
-            r#"INSERT INTO beneficiaries (vault_id, stellar_address, percentage)
-               VALUES ($1, $2, $3)
-               RETURNING id, vault_id, stellar_address, percentage, claimed, claimed_at"#,
-        )
-        .bind(vault_id)
-        .bind(&beneficiary.stellar_address)
-        .bind(beneficiary.percentage)
-        .fetch_one(pool)
-        .await?;
-        Ok(new_beneficiary)
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        let vault = models::vault::Vault::find_by_id(pool, vault_id)
+            .await?
+            .ok_or("Vault not found")?;
+
+        if vault.owner_id != auth.user_id {
+            return Err("Not authorized".into());
+        }
+
+        let total: i32 = beneficiaries.iter().map(|b| b.percentage).sum();
+        if total != 10000 {
+            return Err(format!("Percentages must sum to 10000, got {}", total).into());
+        }
+
+        let pairs: Vec<(String, i32)> = beneficiaries
+            .into_iter()
+            .map(|b| (b.address, b.percentage))
+            .collect();
+
+        // Sprint 1: DB only. Sprint 2 calls set_beneficiaries() on-chain.
+        let db = models::beneficiary::Beneficiary::set_for_vault(pool, vault_id, &pairs).await?;
+        Ok(to_gql_beneficiaries(db))
     }
 
-    /// Register a document
-    async fn register_document(&self, ctx: &Context<'_>, stellar_address: String, input: RegisterDocumentInput) -> Result<Document> {
+    /// Submit a proof-of-life verification.
+    async fn submit_verification(
+        &self,
+        ctx: &Context<'_>,
+        input: VerificationInput,
+    ) -> Result<VerificationResult> {
         let pool = ctx.data::<PgPool>()?;
-        let user = sqlx::query_as::<_, UserIdRow>("SELECT id FROM users WHERE stellar_address = $1")
-            .bind(&stellar_address)
-            .fetch_one(pool)
-            .await?;
-        let document = sqlx::query_as::<_, Document>(
-            r#"INSERT INTO documents (owner_id, vault_id, ipfs_cid, doc_hash, doc_type, is_encrypted, metadata)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               RETURNING id, owner_id, vault_id, ipfs_cid, doc_hash, doc_type, is_encrypted,
-                         metadata, contract_doc_id, registered_at"#,
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        if input.perceptron_output < 0 || input.perceptron_output > 10000 {
+            return Err("perceptron_output must be in range [0, 10000]".into());
+        }
+
+        // Sprint 1: DB only. Sprint 2 signs + publishes on-chain via oracle.
+        let v = models::verification::Verification::create(
+            pool,
+            auth.user_id,
+            input.perceptron_output,
+            &input.source,
+            Some(input.perceptron_output),
+            None,
         )
-        .bind(user.id)
-        .bind(input.vault_id)
-        .bind(&input.ipfs_cid)
-        .bind(&input.doc_hash)
-        .bind(&input.doc_type)
-        .bind(input.is_encrypted)
-        .bind(&input.metadata)
-        .fetch_one(pool)
         .await?;
-        Ok(document)
+
+        Ok(VerificationResult {
+            score: v.score,
+            tx_hash: v.on_chain_tx_hash,
+            vault_status: None,
+        })
     }
 
-    /// Submit verification data
-    async fn submit_verification(&self, ctx: &Context<'_>, input: VerificationInput) -> Result<VerificationRecord> {
+    /// Emergency check-in to reset liveness score.
+    async fn emergency_checkin(&self, ctx: &Context<'_>) -> Result<CheckinResult> {
         let pool = ctx.data::<PgPool>()?;
-        let user = sqlx::query_as::<_, UserIdRow>("SELECT id FROM users WHERE stellar_address = $1")
-            .bind(&input.stellar_address)
-            .fetch_one(pool)
-            .await?;
-        let mut scores = Vec::new();
-        if let Some(s) = input.face_match_score { scores.push(s); }
-        if let Some(s) = input.face_liveness_score { scores.push(s); }
-        if let Some(s) = input.fingerprint_frequency { scores.push(s); }
-        if let Some(s) = input.typing_pattern_match { scores.push(s); }
-        if let Some(s) = input.app_usage_match { scores.push(s); }
-        if let Some(s) = input.movement_pattern_match { scores.push(s); }
-        let score = if scores.is_empty() { 0 } else { scores.iter().sum::<i32>() / scores.len() as i32 };
-        let verification = sqlx::query_as::<_, VerificationRecord>(
-            r#"INSERT INTO verifications (user_id, score, source, face_match_score, face_liveness_score,
-                                         fingerprint_frequency, typing_pattern_match, app_usage_match,
-                                         movement_pattern_match)
-               VALUES ($1, $2, 'behavioral', $3, $4, $5, $6, $7, $8)
-               RETURNING id, user_id, score, source, face_match_score, face_liveness_score,
-                         fingerprint_frequency, fingerprint_count, time_of_day_normality,
-                         typing_pattern_match, app_usage_match, movement_pattern_match,
-                         days_since_last_verify, session_duration, perceptron_score, hash, created_at"#,
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        // Sprint 1: DB only. Sprint 2 calls emergency_checkin() on-chain.
+        let v = models::verification::Verification::create(
+            pool,
+            auth.user_id,
+            10000,
+            "emergency",
+            None,
+            None,
         )
-        .bind(user.id)
-        .bind(score)
-        .bind(input.face_match_score)
-        .bind(input.face_liveness_score)
-        .bind(input.fingerprint_frequency)
-        .bind(input.typing_pattern_match)
-        .bind(input.app_usage_match)
-        .bind(input.movement_pattern_match)
-        .fetch_one(pool)
         .await?;
-        Ok(verification)
+
+        Ok(CheckinResult {
+            success: true,
+            new_score: v.score,
+            tx_hash: None,
+        })
+    }
+
+    /// Claim inheritance from a triggered vault.
+    async fn claim_inheritance(
+        &self,
+        ctx: &Context<'_>,
+        vault_id: Uuid,
+    ) -> Result<ClaimResult> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        let vault = models::vault::Vault::find_by_id(pool, vault_id)
+            .await?
+            .ok_or("Vault not found")?;
+
+        if vault.status != "triggered" {
+            return Err("Vault must be in TRIGGERED status to claim".into());
+        }
+
+        let can_claim = models::beneficiary::Beneficiary::can_claim(
+            pool,
+            vault_id,
+            &auth.stellar_address,
+        )
+        .await?;
+
+        if !can_claim {
+            return Err("Not a valid beneficiary or already claimed".into());
+        }
+
+        // Sprint 1: DB only. Sprint 2 releases via Trustless Work C2C.
+        let b = models::beneficiary::Beneficiary::record_claim(
+            pool,
+            vault_id,
+            &auth.stellar_address,
+        )
+        .await?;
+
+        Ok(ClaimResult {
+            success: true,
+            amount_received: format!("{}%", b.percentage as f64 / 100.0),
+            tx_hash: None,
+        })
+    }
+
+    /// Force vault state transition (admin/demo).
+    async fn force_transition(
+        &self,
+        ctx: &Context<'_>,
+        vault_id: Uuid,
+        new_status: VaultStatus,
+    ) -> Result<Vault> {
+        let pool = ctx.data::<PgPool>()?;
+
+        // Sprint 1: DB only. Sprint 2 calls transition_status() on-chain.
+        let vault =
+            models::vault::Vault::update_status(pool, vault_id, new_status.as_str()).await?;
+
+        build_vault(pool, vault).await
     }
 }

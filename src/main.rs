@@ -1,44 +1,38 @@
 use actix_cors::Cors;
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use async_graphql::{EmptySubscription, Schema};
-use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
+use async_graphql_actix_web::GraphQLRequest;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod auth;
 mod config;
 mod db;
 mod graphql;
+mod models;
 
+use auth::SessionStore;
 use config::Config;
-use graphql::schema::{QueryRoot, MutationRoot, AppSchema};
+use graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 
-async fn health(
-    db_pool: web::Data<sqlx::PgPool>,
-    redis_client: web::Data<redis::Client>,
-) -> impl Responder {
-    // Check PostgreSQL
+async fn health(db_pool: web::Data<sqlx::PgPool>) -> impl Responder {
     let pg_ok = sqlx::query("SELECT 1")
         .fetch_one(db_pool.get_ref())
         .await
         .is_ok();
 
-    // Check Redis
-    let redis_ok = redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .is_ok();
-
-    if pg_ok && redis_ok {
+    if pg_ok {
         HttpResponse::Ok().json(serde_json::json!({
             "status": "healthy",
-            "postgres": "connected",
-            "redis": "connected"
+            "postgres": "connected"
         }))
     } else {
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "unhealthy",
-            "postgres": if pg_ok { "connected" } else { "disconnected" },
-            "redis": if redis_ok { "connected" } else { "disconnected" }
+            "postgres": "disconnected"
         }))
     }
 }
@@ -53,50 +47,66 @@ async fn graphql_playground() -> HttpResponse {
 
 async fn graphql_handler(
     schema: web::Data<AppSchema>,
-    req: GraphQLRequest,
-) -> GraphQLResponse {
-    GraphQLResponse(async_graphql::BatchResponse::Single(
-        schema.execute(req.into_inner()).await,
-    ))
+    sessions: web::Data<SessionStore>,
+    http_req: HttpRequest,
+    gql_req: GraphQLRequest,
+) -> HttpResponse {
+    let auth_user = auth::extract_auth(&http_req, sessions.get_ref()).await;
+
+    match auth_user {
+        Some(user) => {
+            let request = gql_req.into_inner().data(user);
+            let response = schema.execute(request).await;
+            HttpResponse::Ok()
+                .content_type("application/json")
+                .json(response)
+        }
+        None => HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Missing or invalid Authorization header. Use POST /auth first."
+        })),
+    }
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Load .env: cwd first, then oracle/.env (so "cargo run" from repo root still gets oracle config)
+    // Load .env: cwd first, then oracle/.env
     dotenvy::dotenv().ok();
     dotenvy::from_path("oracle/.env").ok();
 
-    // Initialize tracing
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set tracing subscriber");
 
-    // Load configuration
     let config = Config::from_env();
     info!("Configuration loaded successfully");
 
     // Initialize database pool
-    let db_pool = db::postgres::create_pool(&config.database_url).await.unwrap_or_else(|e| {
-        let hint = db::postgres::postgres_utf8_hint(&e);
-        eprintln!(
-            "Failed to create PostgreSQL pool: {}.\n{}",
-            e,
-            hint.as_deref().unwrap_or("")
-        );
-        std::process::exit(1);
-    });
+    let db_pool = db::postgres::create_pool(&config.database_url)
+        .await
+        .unwrap_or_else(|e| {
+            let hint = db::postgres::postgres_utf8_hint(&e);
+            eprintln!(
+                "Failed to create PostgreSQL pool: {}.\n{}",
+                e,
+                hint.as_deref().unwrap_or("")
+            );
+            std::process::exit(1);
+        });
     info!("PostgreSQL connection pool created");
 
-    // Initialize Redis client
-    let redis_client = db::redis::create_client(&config.redis_url);
-    info!("Redis client created");
+    // Run migrations
+    db::postgres::run_migrations(&db_pool).await;
+    info!("Database migrations applied");
+
+    // Session store (in-memory)
+    let sessions: SessionStore = Arc::new(RwLock::new(HashMap::new()));
+    info!("Session store initialized");
 
     // Build GraphQL schema
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(db_pool.clone())
-        .data(redis_client.clone())
         .finish();
     info!("GraphQL schema built");
 
@@ -105,7 +115,6 @@ async fn main() -> std::io::Result<()> {
 
     info!("Starting server at {}:{}", host, port);
 
-    // Start HTTP server
     HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -116,8 +125,9 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(schema.clone()))
             .app_data(web::Data::new(db_pool.clone()))
-            .app_data(web::Data::new(redis_client.clone()))
+            .app_data(web::Data::new(sessions.clone()))
             .route("/health", web::get().to(health))
+            .route("/auth", web::post().to(auth::auth_handler))
             .route("/graphql", web::post().to(graphql_handler))
             .route("/graphql/playground", web::get().to(graphql_playground))
     })

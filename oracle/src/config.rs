@@ -1,6 +1,6 @@
 use std::env;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
     pub host: String,
@@ -17,7 +17,7 @@ impl Config {
             port: env::var("PORT")
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()
-                .expect("PORT must be a number"),
+                .expect("PORT must be a valid number"),
         }
     }
 }
