@@ -1,7 +1,7 @@
 use std::env;
 
-#[derive(Cl>, Debug)]
-pub struct AppC>{
+#[derive(Clone, Debug)]
+pub struct Config {
     pub database_url: String,
     pub redis_url: String,
     pub host: String,
@@ -9,7 +9,7 @@ pub struct AppC>{
     pub jwt_secret: String,
 }
 
-impl AppC>{
+impl Config {
     pub fn from_env() -> Self {
         Self {
             database_url: env::var("DATABASE_URL")
