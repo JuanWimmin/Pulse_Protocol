@@ -1,0 +1,31 @@
+{
+  "name": "pulse-protocol-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pulse Protocol - Mobile App (React Native)",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@apollo/client": "^3.11.0",
+    "@react-navigation/native": "^6.1.0",
+    "@react-navigation/stack": "^6.3.0",
+    "@stellar/stellar-sdk": "^12.0.0",
+    "graphql": "^16.9.0",
+    "react": "^18.2.0",
+    "react-native": "^0.74.0",
+    "react-native-biometrics": "^3.0.1",
+    "react-native-keychain": "^8.2.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/react": "^18.2.0",
+    "@types/react-native": "^0.73.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.5.0"
+  }
+}
