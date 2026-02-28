@@ -73,6 +73,27 @@ pub struct TokenBalance {
 }
 
 #[derive(SimpleObject, Clone, Debug)]
+pub struct Asset {
+    pub id: Uuid,
+    pub name: String,
+    pub symbol: String,
+    pub amount: f64,
+    pub value_usd: f64,
+    pub custody: bool,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject, Clone, Debug)]
+pub struct ActivityEvent {
+    pub id: Uuid,
+    pub title: String,
+    pub detail: Option<String>,
+    pub kind: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject, Clone, Debug)]
 pub struct TransactionResult {
     pub success: bool,
     pub tx_hash: Option<String>,
@@ -118,4 +139,21 @@ pub struct BeneficiaryInput {
 pub struct VerificationInput {
     pub perceptron_output: i32,
     pub source: String,
+}
+
+#[derive(InputObject, Debug)]
+pub struct AddAssetInput {
+    pub name: String,
+    pub symbol: String,
+    pub amount: f64,
+    pub value_usd: f64,
+    pub custody: bool,
+    pub status: Option<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct ActivityInput {
+    pub title: String,
+    pub detail: Option<String>,
+    pub kind: String,
 }

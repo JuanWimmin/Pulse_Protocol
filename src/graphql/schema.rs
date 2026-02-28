@@ -88,6 +88,23 @@ impl QueryRoot {
         }
     }
 
+    /// Get liveness score for authenticated user.
+    async fn my_liveness(&self, ctx: &Context<'_>) -> Result<Option<LivenessData>> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+        match models::verification::Verification::latest(pool, auth.user_id).await? {
+            Some(v) => {
+                let count = models::verification::Verification::count(pool, auth.user_id).await?;
+                Ok(Some(LivenessData {
+                    score: v.score,
+                    last_verified: v.created_at,
+                    total_verifications: count as i32,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Get beneficiaries for a vault.
     async fn beneficiaries(
         &self,
@@ -97,6 +114,48 @@ impl QueryRoot {
         let pool = ctx.data::<PgPool>()?;
         let db = models::beneficiary::Beneficiary::find_by_vault(pool, vault_id).await?;
         Ok(to_gql_beneficiaries(db))
+    }
+
+    /// Get assets for the authenticated user.
+    async fn my_assets(&self, ctx: &Context<'_>) -> Result<Vec<Asset>> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+        let items = models::asset::Asset::find_by_owner(pool, auth.user_id).await?;
+        Ok(items
+            .into_iter()
+            .map(|a| Asset {
+                id: a.id,
+                name: a.name,
+                symbol: a.symbol,
+                amount: a.amount,
+                value_usd: a.value_usd,
+                custody: a.custody,
+                status: a.status,
+                created_at: a.created_at,
+            })
+            .collect())
+    }
+
+    /// Activity feed for the authenticated user.
+    async fn activity_feed(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<Vec<ActivityEvent>> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+        let limit = limit.unwrap_or(20).max(1) as i64;
+        let items = models::activity::ActivityEvent::find_by_user(pool, auth.user_id, limit).await?;
+        Ok(items
+            .into_iter()
+            .map(|a| ActivityEvent {
+                id: a.id,
+                title: a.title,
+                detail: a.detail,
+                kind: a.kind,
+                created_at: a.created_at,
+            })
+            .collect())
     }
 }
 
@@ -126,6 +185,48 @@ impl MutationRoot {
             escrow_contract: vault.escrow_contract_id,
             created_at: vault.created_at,
         })
+    }
+
+    /// Add an asset to the user's inventory.
+    async fn add_asset(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] input: AddAssetInput,
+    ) -> Result<Asset> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        let status = input.status.unwrap_or_else(|| "active".to_string());
+        let asset = models::asset::Asset::create(
+            pool,
+            auth.user_id,
+            &input.name,
+            &input.symbol,
+            input.amount,
+            input.value_usd,
+            input.custody,
+            &status,
+        )
+        .await?;
+
+        Ok(Asset {
+            id: asset.id,
+            name: asset.name,
+            symbol: asset.symbol,
+            amount: asset.amount,
+            value_usd: asset.value_usd,
+            custody: asset.custody,
+            status: asset.status,
+            created_at: asset.created_at,
+        })
+    }
+
+    /// Remove an asset owned by the user.
+    async fn remove_asset(&self, ctx: &Context<'_>, id: Uuid) -> Result<bool> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+        let deleted = models::asset::Asset::delete(pool, id, auth.user_id).await?;
+        Ok(deleted)
     }
 
     /// Deposit funds into a vault.
@@ -220,6 +321,41 @@ impl MutationRoot {
             tx_hash: v.on_chain_tx_hash,
             vault_status: None,
         })
+    }
+
+    /// Log a manual activity event.
+    async fn log_activity(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "input")] input: ActivityInput,
+    ) -> Result<ActivityEvent> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+
+        let event = models::activity::ActivityEvent::create(
+            pool,
+            auth.user_id,
+            &input.title,
+            input.detail.as_deref(),
+            &input.kind,
+        )
+        .await?;
+
+        Ok(ActivityEvent {
+            id: event.id,
+            title: event.title,
+            detail: event.detail,
+            kind: event.kind,
+            created_at: event.created_at,
+        })
+    }
+
+    /// Remove an activity event.
+    async fn remove_activity(&self, ctx: &Context<'_>, id: Uuid) -> Result<bool> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth = ctx.data::<AuthenticatedUser>()?;
+        let deleted = models::activity::ActivityEvent::delete(pool, id, auth.user_id).await?;
+        Ok(deleted)
     }
 
     /// Emergency check-in to reset liveness score.
