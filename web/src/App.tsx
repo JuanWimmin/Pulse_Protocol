@@ -1,4 +1,4 @@
-﻿
+
 import { useEffect, useMemo, useState } from "react";
 import { checkFreighter, connectFreighter } from "./lib/freighter";
 import { authenticateWithWallet, graphQLRequest } from "./lib/api";
@@ -166,6 +166,7 @@ export default function App() {
   const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDark, setIsDark] = useState(true);
 
   const [assetForm, setAssetForm] = useState({
     name: "",
@@ -191,6 +192,22 @@ export default function App() {
     token: "XLM",
     initialDeposit: ""
   });
+
+  const handleLogout = () => {
+    localStorage.removeItem("pp_token");
+    setAuthToken(null);
+    setWallet({ status: "idle" });
+    setVaults([]);
+    setAssets([]);
+    setActivity([]);
+    setBeneficiaries([]);
+    setLiveness(null);
+    setSelectedVaultId(null);
+  };
+
+  useEffect(() => {
+    document.body.classList.toggle("light-mode", !isDark);
+  }, [isDark]);
 
   useEffect(() => {
     let mounted = true;
@@ -463,16 +480,24 @@ export default function App() {
 
   return (
     <div className="app">
+      <button
+        className="theme-toggle"
+        onClick={() => setIsDark(!isDark)}
+        title="Toggle theme"
+      >
+        {isDark ? "○" : "●"}
+      </button>
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">PP</span>
+          <span className="brand-mark">♦</span>
           <div>
-            <p className="brand-title">Pulse Protocol</p>
+            <p className="brand-title">Pulse</p>
             <p className="brand-subtitle">Inheritance Operations</p>
           </div>
         </div>
 
         <nav className="nav">
+          <p className="nav-group-label">Main</p>
           {sections.map((section) => (
             <button
               key={section.key}
@@ -488,6 +513,9 @@ export default function App() {
         </nav>
 
         <div className="sidebar-footer">
+          <button className="logout-btn" onClick={handleLogout}>
+            Disconnect wallet
+          </button>
           <div className="status-pill">
             <span className="pulse" />
             MVP build - testnet ready
@@ -509,7 +537,7 @@ export default function App() {
               <div className="wallet-info">
                 <div>
                   <p className="wallet-label">Wallet connected</p>
-                  <p className="wallet-address">
+                  <p className="wallet-address numeric">
                     {wallet.address?.slice(0, 6)}...{wallet.address?.slice(-4)}
                   </p>
                 </div>
@@ -577,20 +605,24 @@ export default function App() {
               </div>
               <div className="hero-metrics">
                 <div>
-                  <p className="metric">{currency.format(totals.totalValue)}</p>
+                  <p className="metric numeric">
+                    {currency.format(totals.totalValue)}
+                  </p>
                   <p className="metric-label">Total assets under custody</p>
                 </div>
                 <div className="hero-grid">
                   <div>
-                    <p className="metric-value">{totals.activeAssets}</p>
+                    <p className="metric-value numeric">
+                      {totals.activeAssets}
+                    </p>
                     <p className="metric-label">Active assets</p>
                   </div>
                   <div>
-                    <p className="metric-value">{vaults.length}</p>
+                    <p className="metric-value numeric">{vaults.length}</p>
                     <p className="metric-label">Vaults created</p>
                   </div>
                   <div>
-                    <p className="metric-value">
+                    <p className="metric-value numeric">
                       {liveness ? `${liveness.score / 100}%` : "--"}
                     </p>
                     <p className="metric-label">Liveness score</p>
@@ -702,21 +734,25 @@ export default function App() {
                   {loading ? "Syncing..." : "Live from database"}
                 </span>
               </div>
-              <p className="metric">{currency.format(totals.totalValue)}</p>
+              <p className="metric numeric">
+                {currency.format(totals.totalValue)}
+              </p>
               <div className="metric-row">
                 <div>
                   <p className="metric-label">Assets in custody</p>
-                  <p className="metric-value">
+                  <p className="metric-value numeric">
                     {currency.format(totals.custodyValue)}
                   </p>
                 </div>
                 <div>
                   <p className="metric-label">Active assets</p>
-                  <p className="metric-value">{totals.activeAssets}</p>
+                  <p className="metric-value numeric">
+                    {totals.activeAssets}
+                  </p>
                 </div>
                 <div>
                   <p className="metric-label">Custody ratio</p>
-                  <p className="metric-value">
+                  <p className="metric-value numeric">
                     {percent.format(
                       totals.totalValue === 0
                         ? 0
@@ -735,14 +771,18 @@ export default function App() {
               {liveness ? (
                 <div className="stack">
                   <div>
-                    <p className="metric-value">{liveness.score / 100}%</p>
+                    <p className="metric-value numeric">
+                      {liveness.score / 100}%
+                    </p>
                     <p className="metric-label">
                       Last verified {new Date(liveness.lastVerified).toLocaleString()}
                     </p>
                   </div>
                   <div>
                     <p className="metric-label">Total verifications</p>
-                    <p className="metric-value">{liveness.totalVerifications}</p>
+                    <p className="metric-value numeric">
+                      {liveness.totalVerifications}
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -790,7 +830,7 @@ export default function App() {
                       <div>
                         <p className="list-title">{b.address}</p>
                         <p className="list-subtitle">
-                          Allocation {b.percentage / 100}%
+                            Allocation {b.percentage / 100}%
                         </p>
                       </div>
                       <span className={`status ${b.claimed ? "verified" : "pending"}`}>
@@ -831,9 +871,14 @@ export default function App() {
                         <small>{asset.name}</small>
                       </span>
                       <span>
-                        {asset.amount.toLocaleString()} {asset.symbol}
+                        <span className="numeric">
+                          {asset.amount.toLocaleString()}
+                        </span>{" "}
+                        {asset.symbol}
                       </span>
-                      <span>{currency.format(asset.valueUsd)}</span>
+                      <span className="numeric">
+                        {currency.format(asset.valueUsd)}
+                      </span>
                       <span className={`status ${asset.status}`}>
                         {asset.custody ? "Custody" : "External"} - {asset.status}
                       </span>
@@ -957,7 +1002,9 @@ export default function App() {
                   </select>
                 </label>
                 <div className="allocation">
-                  <p className="metric-value">{beneficiaryTotal / 100}%</p>
+                  <p className="metric-value numeric">
+                    {beneficiaryTotal / 100}%
+                  </p>
                   <p className="metric-label">Total allocation</p>
                 </div>
               </div>
@@ -981,7 +1028,9 @@ export default function App() {
                         <small>Beneficiary</small>
                       </span>
                       <span>{person.address}</span>
-                      <span>{person.percentage / 100}%</span>
+                      <span className="numeric">
+                        {person.percentage / 100}%
+                      </span>
                       <span
                         className={`status ${person.claimed ? "verified" : "pending"}`}
                       >
