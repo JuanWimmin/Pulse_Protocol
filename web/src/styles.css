@@ -196,6 +196,7 @@ h1, h2, h3, .brand-title {
   margin: 0 0 6px;
 }
 
+/* ── FIX 1: Nav item — solo label visible, descripción como tooltip animado ── */
 .nav-item {
   border: 1px solid transparent;
   background: transparent;
@@ -209,15 +210,44 @@ h1, h2, h3, .brand-title {
   display: flex;
   align-items: center;
   gap: 10px;
+  position: relative;
 }
 
-.nav-item span { font-weight: 600; display: block; }
-
-.nav-item small {
-  color: var(--muted-foreground);
+.nav-item span {
+  font-weight: 600;
   display: block;
-  margin-top: 4px;
-  font-size: 0.78rem;
+}
+
+/* Ocultar la descripción del DOM visual */
+.nav-item small {
+  display: none;
+}
+
+/* Tooltip usando data-tooltip en el elemento */
+.nav-item::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-6px);
+  background: var(--card-solid);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 999;
+}
+
+.nav-item:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
 .nav-item:hover {
@@ -520,6 +550,26 @@ h1 {
 .activity.distribution { border-left-color: var(--success); }
 .activity.alert { border-left-color: var(--destructive); }
 
+/* ── FIX 2 & 3: Truncar direcciones de wallet en listas y tablas ── */
+
+/* Beneficiary Coverage (dashboard) — list-title truncado */
+.stack li .list-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* Tabla Beneficiaries — columna Address truncada para no tapar Remove */
+.table-row .address-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+  font-family: var(--font-numeric);
+  font-size: 0.82rem;
+}
+
 /* ── STATUS ── */
 .status {
   padding: 4px 10px;
@@ -527,6 +577,8 @@ h1 {
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: capitalize;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .status.verified { background: rgba(92,184,138,0.15); color: var(--success); border: 1px solid rgba(92,184,138,0.25); }
@@ -550,7 +602,7 @@ h1 {
 }
 
 .table-row.empty-row { grid-template-columns: 1fr; color: var(--muted-foreground); }
-.table-row span { display: flex; flex-direction: column; gap: 4px; }
+.table-row span { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .table-row strong { font-weight: 600; }
 .table-row small { color: var(--muted-foreground); }
 
@@ -661,6 +713,15 @@ input:focus, select:focus {
   }
   .nav { flex-direction: row; flex-wrap: wrap; width: 100%; }
   .nav-item { flex: 1 1 200px; }
+  /* En mobile el tooltip no tiene espacio a la derecha, lo movemos abajo */
+  .nav-item::after {
+    left: 50%;
+    top: calc(100% + 8px);
+    transform: translateX(-50%) translateY(-4px);
+  }
+  .nav-item:hover::after {
+    transform: translateX(-50%) translateY(0);
+  }
   .sidebar-footer { width: 100%; }
   .topbar { flex-direction: column; align-items: flex-start; }
   .grid.wide { grid-template-columns: 1fr; }
