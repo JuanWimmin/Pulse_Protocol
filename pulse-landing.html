@@ -1,0 +1,80 @@
+import { useState } from "react";
+import { connectFreighter } from "../lib/freighter";
+import { authenticateWithWallet } from "../lib/api";
+import "../styles/landing.css";
+
+export default function Landing({ onConnect }: { onConnect: () => void }) {
+  const [isDark, setIsDark] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleConnectWallet = async () => {
+    setIsConnecting(true);
+    setError(null);
+
+    try {
+      const result = await connectFreighter();
+      
+      if (!result.installed) {
+        setError("Freighter wallet not installed. Please install it first.");
+        setIsConnecting(false);
+        return;
+      }
+
+      if (result.error || !result.address) {
+        setError(result.error || "Failed to connect wallet");
+        setIsConnecting(false);
+        return;
+      }
+
+      // Authenticate with the wallet
+      const auth = await authenticateWithWallet(result.address);
+      localStorage.setItem("pp_token", auth.token);
+      
+      onConnect();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Connection failed");
+      setIsConnecting(false);
+    }
+  };
+
+  return (
+    <div style={{ theme: isDark ? "dark" : "light" }}>
+      {/* Copy all the HTML from pulse-landing.html here, converting to React */}
+      <nav style={{ display: "flex", justifyContent: "space-between", padding: "20px 40px" }}>
+        <div className="brand">
+          <span>♦</span> Pulse
+        </div>
+        <button 
+          onClick={handleConnectWallet}
+          disabled={isConnecting}
+          className="btn-primary"
+        >
+          {isConnecting ? "Connecting..." : "Connect Wallet"}
+        </button>
+      </nav>
+
+      <section className="hero">
+        <div className="hero-left">
+          <div className="eyebrow">AI-Powered Finance</div>
+          <h1>Your <span className="hl">Smarter</span><br />Financial Layer</h1>
+          <p className="hero-sub">
+            Manage assets, track portfolios and automate decisions — 
+            all in one secure platform built for the modern investor.
+          </p>
+          <div className="hero-btns">
+            <button 
+              className="btn-primary" 
+              onClick={handleConnectWallet}
+              disabled={isConnecting}
+            >
+              {isConnecting ? "Connecting..." : "Connect Wallet"}
+            </button>
+            <button className="btn-ghost">Watch Demo</button>
+          </div>
+          {error && <div className="error-message">{error}</div>}
+        </div>
+      </section>
+    </div>
+  );
+}

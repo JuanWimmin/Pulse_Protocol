@@ -61,19 +61,17 @@ pub async fn auth_handler(
         }
     }
 
-    let user = match crate::models::user::User::find_or_create(
-        pool.get_ref(),
-        &payload.stellar_address,
-    )
-    .await
-    {
-        Ok(u) => u,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Database error: {}", e)
-            }));
-        }
-    };
+    let user =
+        match crate::models::user::User::find_or_create(pool.get_ref(), &payload.stellar_address)
+            .await
+        {
+            Ok(u) => u,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Database error: {}", e)
+                }));
+            }
+        };
 
     let token = generate_token();
 
@@ -92,10 +90,7 @@ pub async fn auth_handler(
 }
 
 /// Extract AuthenticatedUser from request using Bearer token.
-pub async fn extract_auth(
-    req: &HttpRequest,
-    sessions: &SessionStore,
-) -> Option<AuthenticatedUser> {
+pub async fn extract_auth(req: &HttpRequest, sessions: &SessionStore) -> Option<AuthenticatedUser> {
     let auth_header = req.headers().get("Authorization")?.to_str().ok()?;
     let token = auth_header.strip_prefix("Bearer ")?;
     let sessions = sessions.read().await;
@@ -138,7 +133,8 @@ fn verify_stellar_signature(
     sig_array.copy_from_slice(&sig_bytes);
     let signature = Signature::from_bytes(&sig_array);
 
-    match verifying_key.verify(message.as_bytes(), &signature) {
+    let hashed = message.as_bytes();
+    match verifying_key.verify(hashed, &signature) {
         Ok(()) => Ok(true),
         Err(_) => Ok(false),
     }
@@ -239,6 +235,9 @@ mod tests {
     #[test]
     fn test_invalid_address() {
         assert!(decode_stellar_address("INVALID").is_err());
-        assert!(decode_stellar_address("S1234567890123456789012345678901234567890123456789012345").is_err());
+        assert!(
+            decode_stellar_address("S1234567890123456789012345678901234567890123456789012345")
+                .is_err()
+        );
     }
 }

@@ -18,29 +18,28 @@ export type GraphQLResponse<T> = {
   errors?: GraphQLError[];
 };
 
-export async function authenticateWithWallet(
-  address: string
-): Promise<AuthResult> {
+export async function authenticateWithWallet(address: string): Promise<AuthResult> {
   const timestamp = Date.now();
   const message = `pulse-auth:${timestamp}`;
-  const signed = await signMessage(message, { address });
 
+  // Freighter firma los bytes del mensaje codificado en base64
+  const messageBase64 = Buffer.from(message).toString("base64");
+
+  const signed = await signMessage(messageBase64, { address });
   if ("error" in signed && signed.error) {
     throw new Error(signed.error.message || "Failed to sign message");
   }
 
-  const signatureHex = normalizeSignatureToHex(signed.signedMessage);
+  const signatureHex = Buffer.from(signed.signedMessage, "base64").toString("hex");
 
   const response = await fetch(`${API_URL}/auth`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       stellar_address: address,
-      message,
-      signature: signatureHex
-    })
+      message,        // mandamos el string original al backend
+      signature: signatureHex,
+    }),
   });
 
   if (!response.ok) {
@@ -50,7 +49,6 @@ export async function authenticateWithWallet(
 
   return response.json() as Promise<AuthResult>;
 }
-
 export async function graphQLRequest<T>(
   token: string,
   query: string,
