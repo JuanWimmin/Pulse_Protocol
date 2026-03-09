@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, Address};
 
+/// VaultId = u64, inlined everywhere to avoid Stellar CLI type-alias issues.
 pub type VaultId = u64;
 
 #[contracttype]
@@ -23,7 +24,7 @@ pub struct Beneficiary {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct VaultInfo {
-    pub id: VaultId,
+    pub id: u64,
     pub owner: Address,
     pub token: Address,
     pub status: VaultStatus,

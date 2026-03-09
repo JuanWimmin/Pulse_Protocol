@@ -87,7 +87,7 @@ stellar contract invoke \
     -- \
     set_beneficiaries \
     --vault_id "$VAULT_NUM" \
-    --beneficiaries "[{\"address\":\"$ALICE_ADDR\",\"percentage\":6000},{\"address\":\"$BOB_ADDR\",\"percentage\":4000}]" \
+    --beneficiaries "[{\"address\":\"$ALICE_ADDR\",\"percentage\":6000,\"claimed\":false},{\"address\":\"$BOB_ADDR\",\"percentage\":4000,\"claimed\":false}]" \
     || warn "Set beneficiaries failed"
 
 # ── Link ProofOfLife to vault ──
@@ -106,12 +106,12 @@ stellar contract invoke \
 log "Registering perceptron model for Alice..."
 stellar contract invoke \
     --id "$POL_ID" \
-    --source "pulse-oracle" \
+    --source "pulse-user-alice" \
     --network "$NETWORK" \
     -- \
     register_model \
     --user "$ALICE_ADDR" \
-    --initial_weights "[500000,500000,500000,500000,500000,500000,500000,500000,500000,500000]" \
+    --initial_weights "[\"500000\",\"500000\",\"500000\",\"500000\",\"500000\",\"500000\",\"500000\",\"500000\",\"500000\",\"500000\"]" \
     --bias 0 \
     || warn "Register model failed"
 

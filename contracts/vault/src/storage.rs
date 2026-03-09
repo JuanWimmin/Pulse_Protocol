@@ -7,9 +7,9 @@ use crate::types::{VaultId, VaultInfo, Beneficiary};
 pub enum DataKey {
     Admin,
     VaultCount,
-    Vault(VaultId),
-    VaultBeneficiaries(VaultId),
-    ProofOfLifeLink(VaultId),
+    Vault(u64),
+    VaultBeneficiaries(u64),
+    ProofOfLifeLink(u64),
     Initialized,
 }
 

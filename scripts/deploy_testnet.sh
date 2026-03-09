@@ -18,7 +18,18 @@ NETWORK="testnet"
 RPC_URL="https://soroban-testnet.stellar.org"
 NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 
-WASM_DIR="target/wasm32-unknown-unknown/release"
+# Use wasm32v1-none (Soroban-compatible, no reference-types) if available,
+# fallback to wasm32-unknown-unknown for older toolchains.
+if [ -d "target/wasm32v1-none/release" ]; then
+    WASM_DIR="target/wasm32v1-none/release"
+else
+    WASM_DIR="target/wasm32-unknown-unknown/release"
+fi
+
+# Tip: Build with `stellar contract build` in each contract dir, or:
+#   rustup target add wasm32v1-none
+#   cargo build -p pulse-vault -p pulse-proof-of-life -p pulse-beneficiary \
+#     --target wasm32v1-none --release
 OUTPUT_FILE="deployed_contracts.json"
 
 # Colors

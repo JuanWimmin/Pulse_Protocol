@@ -2,7 +2,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Vec
 
 use crate::errors::VaultError;
 use crate::storage;
-use crate::types::{Beneficiary, VaultId, VaultInfo, VaultStatus};
+use crate::types::{Beneficiary, VaultInfo, VaultStatus};
 
 #[contract]
 pub struct VaultContract;
@@ -21,7 +21,7 @@ impl VaultContract {
     }
 
     /// Create a new vault. Returns the vault ID.
-    pub fn create_vault(env: Env, owner: Address, token: Address) -> Result<VaultId, VaultError> {
+    pub fn create_vault(env: Env, owner: Address, token: Address) -> Result<u64, VaultError> {
         owner.require_auth();
 
         let vault_id = storage::get_vault_count(&env);
@@ -45,7 +45,7 @@ impl VaultContract {
     }
 
     /// Deposit tokens into a vault.
-    pub fn deposit(env: Env, vault_id: VaultId, from: Address, amount: i128) -> Result<(), VaultError> {
+    pub fn deposit(env: Env, vault_id: u64, from: Address, amount: i128) -> Result<(), VaultError> {
         if amount <= 0 {
             return Err(VaultError::ZeroAmount);
         }
@@ -73,7 +73,7 @@ impl VaultContract {
     }
 
     /// Withdraw tokens from a vault. Only allowed when status is Active.
-    pub fn withdraw(env: Env, vault_id: VaultId, to: Address, amount: i128) -> Result<(), VaultError> {
+    pub fn withdraw(env: Env, vault_id: u64, to: Address, amount: i128) -> Result<(), VaultError> {
         if amount <= 0 {
             return Err(VaultError::ZeroAmount);
         }
@@ -107,7 +107,7 @@ impl VaultContract {
     /// Set beneficiaries for a vault. Sum of percentages must equal 10000.
     pub fn set_beneficiaries(
         env: Env,
-        vault_id: VaultId,
+        vault_id: u64,
         beneficiaries: Vec<Beneficiary>,
     ) -> Result<(), VaultError> {
         let vault = storage::get_vault(&env, vault_id)
@@ -140,26 +140,26 @@ impl VaultContract {
     }
 
     /// Get vault info.
-    pub fn get_vault(env: Env, vault_id: VaultId) -> Result<VaultInfo, VaultError> {
+    pub fn get_vault(env: Env, vault_id: u64) -> Result<VaultInfo, VaultError> {
         storage::get_vault(&env, vault_id).ok_or(VaultError::VaultNotFound)
     }
 
     /// Get vault status.
-    pub fn get_status(env: Env, vault_id: VaultId) -> Result<VaultStatus, VaultError> {
+    pub fn get_status(env: Env, vault_id: u64) -> Result<VaultStatus, VaultError> {
         let vault = storage::get_vault(&env, vault_id)
             .ok_or(VaultError::VaultNotFound)?;
         Ok(vault.status)
     }
 
     /// Get vault balance.
-    pub fn get_balance(env: Env, vault_id: VaultId) -> Result<i128, VaultError> {
+    pub fn get_balance(env: Env, vault_id: u64) -> Result<i128, VaultError> {
         let vault = storage::get_vault(&env, vault_id)
             .ok_or(VaultError::VaultNotFound)?;
         Ok(vault.balance)
     }
 
     /// Get beneficiaries for a vault.
-    pub fn get_beneficiaries(env: Env, vault_id: VaultId) -> Result<Vec<Beneficiary>, VaultError> {
+    pub fn get_beneficiaries(env: Env, vault_id: u64) -> Result<Vec<Beneficiary>, VaultError> {
         if storage::get_vault(&env, vault_id).is_none() {
             return Err(VaultError::VaultNotFound);
         }
@@ -169,7 +169,7 @@ impl VaultContract {
     /// Link a ProofOfLife contract to this vault.
     pub fn link_proof_of_life(
         env: Env,
-        vault_id: VaultId,
+        vault_id: u64,
         pol_contract: Address,
     ) -> Result<(), VaultError> {
         let vault = storage::get_vault(&env, vault_id)
@@ -185,7 +185,7 @@ impl VaultContract {
     /// Transition vault status. Only callable by the linked ProofOfLife contract or admin.
     pub fn transition_status(
         env: Env,
-        vault_id: VaultId,
+        vault_id: u64,
         caller: Address,
         new_status: VaultStatus,
     ) -> Result<(), VaultError> {
