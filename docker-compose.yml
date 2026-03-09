@@ -4,13 +4,13 @@ services:
     container_name: pulse_postgres
     environment:
       POSTGRES_USER: pulse
-      POSTGRES_PASSWORD: pulse_secret
+      POSTGRES_PASSWORD: pulse_dev
       POSTGRES_DB: pulse_protocol
       POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - pulse_pgdata:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
@@ -20,15 +20,17 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: pulse_redis
+  oracle:
+    build:
+      context: .
+      dockerfile: oracle/Dockerfile
+    container_name: pulse_oracle
+    env_file: .env
     ports:
-      - "6379:6379"
-    volumes:
-      - pulse_redisdata:/data
-    command: redis-server --appendonly yes
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pulse_pgdata:
-  pulse_redisdata:

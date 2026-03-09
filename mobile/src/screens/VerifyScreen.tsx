@@ -18,10 +18,8 @@ import {
   StyleSheet,
 } from "react-native";
 import { runVerification, VerificationResult } from "../services/verification";
-
-// TODO(F1): Replace with Apollo Client mutation hook once client is set up
-// import { useMutation } from "@apollo/client";
-// import { SUBMIT_VERIFICATION } from "../services/graphql/mutations";
+import { useMutation } from "@apollo/client";
+import { SUBMIT_VERIFICATION } from "../services/graphql/mutations";
 
 type VerifyScreenProps = {
   /// Timestamp of the last successful verification (from store/backend).
@@ -36,6 +34,7 @@ export default function VerifyScreen({
   lastVerificationTimestamp,
   onVerificationComplete,
 }: VerifyScreenProps) {
+  const [submitVerification] = useMutation(SUBMIT_VERIFICATION);
   const [state, setState] = useState<ScreenState>("idle");
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -59,29 +58,25 @@ export default function VerifyScreen({
       // Step 5: Submit to backend
       setState("submitting");
 
-      // TODO(F1): Replace with actual Apollo mutation call
-      // const { data } = await submitVerification({
-      //   variables: {
-      //     input: {
-      //       perceptronOutput: verificationResult.score,
-      //       source: verificationResult.source,
-      //     },
-      //   },
-      // });
-      // setTxHash(data.submitVerification.txHash);
-
-      // Placeholder: simulate backend response
-      const mockTxHash = "pending_backend_integration";
-      setTxHash(mockTxHash);
+      const { data } = await submitVerification({
+        variables: {
+          input: {
+            perceptronOutput: verificationResult.score,
+            source: verificationResult.source,
+          },
+        },
+      });
+      const backendTxHash = data?.submitVerification?.txHash ?? null;
+      setTxHash(backendTxHash);
 
       setState("done");
-      onVerificationComplete?.(verificationResult.score, mockTxHash);
+      onVerificationComplete?.(verificationResult.score, backendTxHash);
     } catch (err: unknown) {
       setState("error");
       const message = err instanceof Error ? err.message : "Unknown error";
       setErrorMessage(message);
     }
-  }, [lastVerificationTimestamp, onVerificationComplete]);
+  }, [lastVerificationTimestamp, onVerificationComplete, submitVerification]);
 
   const scorePercentage = result ? (result.score / 100).toFixed(2) : "0.00";
   const scoreColor =

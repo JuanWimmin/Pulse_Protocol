@@ -9,7 +9,10 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from "react-native";
+import { Keypair } from "@stellar/stellar-sdk";
+import * as Keychain from "react-native-keychain";
 import { useAuthStore } from "../stores/authStore";
+import { authenticateWithBackend } from "../services/auth";
 
 type Props = {
   onWalletCreated: () => void;
@@ -30,20 +33,16 @@ export default function CreateWalletScreen({ onWalletCreated }: Props) {
 
     try {
       // Generate Stellar keypair
-      // In production: const keypair = Keypair.random();
-      // For MVP we generate a mock address format
-      const mockPublicKey = "G" + Array.from({ length: 55 }, () =>
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"[Math.floor(Math.random() * 32)]
-      ).join("");
-      // Secret key generated but not stored in this MVP mock
-      // In production: await Keychain.setGenericPassword("stellar_secret", secretKey);
+      const keypair = Keypair.random();
+      const publicKey = keypair.publicKey();
+      await Keychain.setGenericPassword("stellar_secret", keypair.secret());
 
-      setAddress(mockPublicKey);
-      setWallet(mockPublicKey);
+      setAddress(publicKey);
+      setWallet(publicKey);
 
-      // Authenticate with backend (mock for MVP)
-      // Real: POST /auth with signed challenge
-      setSession("mock_session_token");
+      // Authenticate with backend
+      const authResult = await authenticateWithBackend(keypair);
+      setSession(authResult.token);
 
       setState("done");
     } catch (err: unknown) {

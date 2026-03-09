@@ -4,13 +4,10 @@
 import { ApolloClient, InMemoryCache, createHttpLink } from "@apollo/client";
 import { setContext } from "@apollo/client/link/context";
 import { useAuthStore } from "../../stores/authStore";
-
-const API_URL = __DEV__
-  ? "http://localhost:8080/graphql"
-  : "https://api.pulseprotocol.io/graphql";
+import { API_BASE_URL } from "../auth";
 
 const httpLink = createHttpLink({
-  uri: API_URL,
+  uri: `${API_BASE_URL}/graphql`,
 });
 
 const authLink = setContext((_, { headers }) => {

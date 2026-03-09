@@ -97,17 +97,36 @@ BEN_ID=$(stellar contract deploy \
 log "Beneficiary deployed: $BEN_ID"
 
 # ── Initialize contracts ──
-log "Initializing ProofOfLife (register oracle model)..."
+log "Initializing Vault contract..."
+stellar contract invoke \
+    --id "$VAULT_ID" \
+    --source "pulse-deployer" \
+    --network "$NETWORK" \
+    -- \
+    initialize \
+    --admin "$DEPLOYER_ADDR" \
+    || warn "Vault initialize failed (may already be initialized)"
+
+log "Initializing ProofOfLife contract..."
 stellar contract invoke \
     --id "$POL_ID" \
     --source "pulse-deployer" \
     --network "$NETWORK" \
     -- \
-    register_model \
+    initialize \
     --admin "$DEPLOYER_ADDR" \
     --oracle "$ORACLE_ADDR" \
-    --threshold 7000 \
-    || warn "register_model failed (may already be initialized)"
+    || warn "ProofOfLife initialize failed (may already be initialized)"
+
+log "Initializing Beneficiary contract..."
+stellar contract invoke \
+    --id "$BEN_ID" \
+    --source "pulse-deployer" \
+    --network "$NETWORK" \
+    -- \
+    initialize \
+    --admin "$DEPLOYER_ADDR" \
+    || warn "Beneficiary initialize failed (may already be initialized)"
 
 # ── Write output ──
 cat > "$OUTPUT_FILE" <<EOF
@@ -136,11 +155,13 @@ log "=============================="
 log ""
 log "Contract IDs saved to: $OUTPUT_FILE"
 log ""
+ORACLE_SECRET=$(stellar keys show pulse-oracle 2>/dev/null || echo 'S...')
+
 log "Add to your .env:"
 log "  VAULT_CONTRACT_ID=$VAULT_ID"
 log "  PROOF_OF_LIFE_CONTRACT_ID=$POL_ID"
 log "  BENEFICIARY_CONTRACT_ID=$BEN_ID"
-log "  ORACLE_SECRET_KEY=$(stellar keys show pulse-oracle 2>/dev/null || echo 'S...')"
+log "  ORACLE_SECRET_KEY=$ORACLE_SECRET"
 log ""
 log "Test accounts funded on testnet:"
 log "  Alice: $ALICE_ADDR"

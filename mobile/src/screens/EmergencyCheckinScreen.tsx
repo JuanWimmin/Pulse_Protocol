@@ -23,10 +23,8 @@ import {
 } from "react-native";
 import { runEmergencyVerification } from "../services/verification";
 import { VaultStatus } from "../types/verification";
-
-// TODO(F1): Replace with Apollo Client mutation hook
-// import { useMutation } from "@apollo/client";
-// import { EMERGENCY_CHECKIN } from "../services/graphql/mutations";
+import { useMutation } from "@apollo/client";
+import { EMERGENCY_CHECKIN } from "../services/graphql/mutations";
 
 type EmergencyCheckinScreenProps = {
   /// Current vault status — screen is only useful when ALERT or GRACE_PERIOD.
@@ -47,8 +45,10 @@ export default function EmergencyCheckinScreen({
   onCheckinComplete,
   onGoBack,
 }: EmergencyCheckinScreenProps) {
+  const [emergencyCheckinMutation] = useMutation(EMERGENCY_CHECKIN);
   const [state, setState] = useState<ScreenState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [checkinTxHash, setCheckinTxHash] = useState<string | null>(null);
 
   const isEligible =
     currentVaultStatus === VaultStatus.ALERT ||
@@ -73,12 +73,10 @@ export default function EmergencyCheckinScreen({
       // Step 5: Submit emergency check-in to backend
       setState("submitting");
 
-      // TODO(F1): Replace with actual Apollo mutation call
-      // const { data } = await emergencyCheckin();
-      // const newStatus = data.emergencyCheckin.vaultStatus;
-
-      // Placeholder: simulate backend response
-      const newStatus = VaultStatus.ACTIVE;
+      const { data } = await emergencyCheckinMutation();
+      const checkinSuccess = data?.emergencyCheckin?.success ?? false;
+      const newStatus = checkinSuccess ? VaultStatus.ACTIVE : currentVaultStatus;
+      setCheckinTxHash(data?.emergencyCheckin?.txHash ?? null);
 
       setState("done");
       onCheckinComplete?.(newStatus);
@@ -87,7 +85,7 @@ export default function EmergencyCheckinScreen({
       const message = err instanceof Error ? err.message : "Unknown error";
       setErrorMessage(message);
     }
-  }, [isEligible, lastVerificationTimestamp, onCheckinComplete]);
+  }, [isEligible, lastVerificationTimestamp, onCheckinComplete, emergencyCheckinMutation, currentVaultStatus]);
 
   const statusLabel: Record<VaultStatus, string> = {
     [VaultStatus.ACTIVE]: "Active",
@@ -169,6 +167,11 @@ export default function EmergencyCheckinScreen({
           <Text style={styles.successStatus}>
             Vault Status: Active
           </Text>
+          {checkinTxHash && (
+            <Text style={styles.txHashText} numberOfLines={1}>
+              Tx: {checkinTxHash}
+            </Text>
+          )}
           {onGoBack && (
             <TouchableOpacity style={styles.backButton} onPress={onGoBack}>
               <Text style={styles.backButtonText}>Return to Dashboard</Text>
@@ -284,6 +287,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#4CAF50",
     fontWeight: "600",
+    marginBottom: 8,
+  },
+  txHashText: {
+    fontSize: 12,
+    fontFamily: "monospace",
+    color: "#757575",
     marginBottom: 32,
   },
   backButton: {

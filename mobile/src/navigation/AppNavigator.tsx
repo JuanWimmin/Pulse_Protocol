@@ -66,7 +66,9 @@ export default function AppNavigator() {
         // Onboarding flow
         <Stack.Screen name="BiometricSetup">
           {() => (
-            <BiometricSetupScreen onSetupComplete={() => {}} />
+            <BiometricSetupScreen
+              onSetupComplete={() => useAuthStore.getState().setBiometricSetup(true)}
+            />
           )}
         </Stack.Screen>
       ) : (
