@@ -15,6 +15,8 @@ pub struct Config {
     pub vault_contract_id: Option<String>,
     pub proof_of_life_contract_id: Option<String>,
     pub beneficiary_contract_id: Option<String>,
+    /// Trustless Work factory contract ID (backend-orquesta mode).
+    pub tw_factory_contract_id: Option<String>,
 }
 
 impl Config {
@@ -36,6 +38,7 @@ impl Config {
             vault_contract_id: env::var("VAULT_CONTRACT_ID").ok(),
             proof_of_life_contract_id: env::var("PROOF_OF_LIFE_CONTRACT_ID").ok(),
             beneficiary_contract_id: env::var("BENEFICIARY_CONTRACT_ID").ok(),
+            tw_factory_contract_id: env::var("TW_FACTORY_CONTRACT_ID").ok(),
         }
     }
 }

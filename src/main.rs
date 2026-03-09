@@ -19,6 +19,7 @@ use auth::SessionStore;
 use config::Config;
 use graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 use services::soroban::SorobanClient;
+use services::trustless_work::TrustlessWorkOrchestrator;
 
 async fn health(db_pool: web::Data<sqlx::PgPool>) -> impl Responder {
     let pg_ok = sqlx::query("SELECT 1")
@@ -118,13 +119,25 @@ async fn main() -> std::io::Result<()> {
         warn!("No ORACLE_SECRET_KEY configured — on-chain operations disabled");
     }
 
+    // Initialize Trustless Work orchestrator (backend-orquesta mode)
+    let tw_orchestrator = TrustlessWorkOrchestrator::new(
+        soroban_client.clone(),
+        config.tw_factory_contract_id.clone(),
+    );
+    if tw_orchestrator.is_available() {
+        info!("Trustless Work integration enabled (factory configured)");
+    } else {
+        warn!("No TW_FACTORY_CONTRACT_ID — escrow operations disabled");
+    }
+
     // Build GraphQL schema with Soroban client injected
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(db_pool.clone())
         .data(soroban_client.clone())
         .data(config.clone())
+        .data(tw_orchestrator)
         .finish();
-    info!("GraphQL schema built (with Soroban integration)");
+    info!("GraphQL schema built (with Soroban + TW integration)");
 
     let host = config.host.clone();
     let port = config.port;

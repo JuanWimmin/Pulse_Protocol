@@ -12,6 +12,7 @@ use crate::services::contracts::proof_of_life::ProofOfLifeContractClient;
 use crate::services::contracts::vault::VaultContractClient;
 use crate::services::publisher::Publisher;
 use crate::services::soroban::SorobanClient;
+use crate::services::trustless_work::TrustlessWorkOrchestrator;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -252,7 +253,8 @@ impl MutationRoot {
         Ok(deleted)
     }
 
-    /// Deposit funds into a vault.
+    /// Deposit funds into a vault. If TW is configured and vault has an escrow,
+    /// funds the escrow on-chain via backend-orquesta.
     async fn deposit(
         &self,
         ctx: &Context<'_>,
@@ -262,6 +264,7 @@ impl MutationRoot {
     ) -> Result<TransactionResult> {
         let pool = ctx.data::<PgPool>()?;
         let auth = ctx.data::<AuthenticatedUser>()?;
+        let tw = ctx.data::<TrustlessWorkOrchestrator>()?;
 
         let vault = models::vault::Vault::find_by_id(pool, vault_id)
             .await?
@@ -271,12 +274,38 @@ impl MutationRoot {
             return Err("Not authorized".into());
         }
 
-        // Sprint 1: Mock. Sprint 2 calls deposit() + fund_escrow() on-chain.
+        // If TW is configured and vault has an escrow, fund it on-chain
+        if tw.is_available() {
+            if let Some(ref escrow_id) = vault.escrow_contract_id {
+                let parsed_amount: i128 = amount
+                    .parse()
+                    .map_err(|_| "Invalid amount (expected integer stroops)")?;
+
+                match tw
+                    .fund_escrow(escrow_id, &auth.stellar_address, parsed_amount, &token)
+                    .await
+                {
+                    Ok(tx_hash) => {
+                        info!("Escrow funded: tx={}", tx_hash);
+                        return Ok(TransactionResult {
+                            success: true,
+                            tx_hash: Some(tx_hash),
+                            message: format!("Deposited {} {} into escrow", amount, token),
+                        });
+                    }
+                    Err(e) => {
+                        warn!("TW fund_escrow failed: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Fallback: DB-only record
         Ok(TransactionResult {
             success: true,
             tx_hash: None,
             message: format!(
-                "Deposit of {} {} queued (on-chain pending)",
+                "Deposit of {} {} recorded (escrow not configured)",
                 amount, token
             ),
         })
@@ -457,6 +486,7 @@ impl MutationRoot {
     }
 
     /// Claim inheritance from a triggered vault.
+    /// If TW is configured, releases funds via escrow to the beneficiary.
     async fn claim_inheritance(
         &self,
         ctx: &Context<'_>,
@@ -464,6 +494,8 @@ impl MutationRoot {
     ) -> Result<ClaimResult> {
         let pool = ctx.data::<PgPool>()?;
         let auth = ctx.data::<AuthenticatedUser>()?;
+        let tw = ctx.data::<TrustlessWorkOrchestrator>()?;
+        let soroban = ctx.data::<SorobanClient>()?;
 
         let vault = models::vault::Vault::find_by_id(pool, vault_id)
             .await?
@@ -484,7 +516,7 @@ impl MutationRoot {
             return Err("Not a valid beneficiary or already claimed".into());
         }
 
-        // Sprint 1: DB only. Sprint 2 releases via Trustless Work C2C.
+        // Record claim in DB
         let b = models::beneficiary::Beneficiary::record_claim(
             pool,
             vault_id,
@@ -492,15 +524,41 @@ impl MutationRoot {
         )
         .await?;
 
+        // Release funds via TW escrow if configured
+        let tx_hash = if tw.is_available() {
+            if let (Some(ref escrow_id), Some(oracle_addr)) =
+                (&vault.escrow_contract_id, soroban.oracle_address())
+            {
+                match tw
+                    .release_to_beneficiary(escrow_id, &oracle_addr, &auth.stellar_address)
+                    .await
+                {
+                    Ok(hash) => {
+                        info!("TW release to {}: tx={}", auth.stellar_address, hash);
+                        Some(hash)
+                    }
+                    Err(e) => {
+                        warn!("TW release failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(ClaimResult {
             success: true,
             amount_received: format!("{}%", b.percentage as f64 / 100.0),
-            tx_hash: None,
+            tx_hash,
         })
     }
 
     /// Force vault state transition (admin/demo).
     /// Optionally calls transition_status() on-chain.
+    /// When transitioning to TRIGGERED, approves TW escrow milestones.
     async fn force_transition(
         &self,
         ctx: &Context<'_>,
@@ -510,6 +568,7 @@ impl MutationRoot {
         let pool = ctx.data::<PgPool>()?;
         let config = ctx.data::<Config>()?;
         let soroban = ctx.data::<SorobanClient>()?;
+        let tw = ctx.data::<TrustlessWorkOrchestrator>()?;
 
         // Try on-chain transition if vault contract is configured
         if let Some(ref contract_id) = config.vault_contract_id {
@@ -525,6 +584,22 @@ impl MutationRoot {
                 match client.transition_status(0, &addr, status_u32).await {
                     Ok(hash) => info!("On-chain transition: tx={}", hash),
                     Err(e) => warn!("On-chain transition failed: {}", e),
+                }
+            }
+        }
+
+        // When transitioning to TRIGGERED, approve TW escrow milestones
+        if matches!(new_status, VaultStatus::Triggered) && tw.is_available() {
+            let vault = models::vault::Vault::find_by_id(pool, vault_id)
+                .await?
+                .ok_or("Vault not found")?;
+
+            if let (Some(ref escrow_id), Some(oracle_addr)) =
+                (&vault.escrow_contract_id, soroban.oracle_address())
+            {
+                match tw.approve_milestones(escrow_id, &oracle_addr).await {
+                    Ok(hash) => info!("TW milestones approved: tx={}", hash),
+                    Err(e) => warn!("TW approve_milestones failed: {}", e),
                 }
             }
         }

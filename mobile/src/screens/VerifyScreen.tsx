@@ -16,7 +16,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
-  Alert,
 } from "react-native";
 import { runVerification, VerificationResult } from "../services/verification";
 
