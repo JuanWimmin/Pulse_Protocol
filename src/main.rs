@@ -5,7 +5,7 @@ use async_graphql_actix_web::GraphQLRequest;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 mod auth;
@@ -13,10 +13,12 @@ mod config;
 mod db;
 mod graphql;
 mod models;
+pub mod services;
 
 use auth::SessionStore;
 use config::Config;
 use graphql::schema::{AppSchema, MutationRoot, QueryRoot};
+use services::soroban::SorobanClient;
 
 async fn health(db_pool: web::Data<sqlx::PgPool>) -> impl Responder {
     let pg_ok = sqlx::query("SELECT 1")
@@ -104,11 +106,25 @@ async fn main() -> std::io::Result<()> {
     let sessions: SessionStore = Arc::new(RwLock::new(HashMap::new()));
     info!("Session store initialized");
 
-    // Build GraphQL schema
+    // Initialize Soroban RPC client
+    let soroban_client = SorobanClient::new(
+        &config.stellar_rpc_url,
+        &config.stellar_network_passphrase,
+        config.oracle_secret_key.as_deref(),
+    );
+    if let Some(addr) = soroban_client.oracle_address() {
+        info!("Oracle Stellar address: {}", addr);
+    } else {
+        warn!("No ORACLE_SECRET_KEY configured — on-chain operations disabled");
+    }
+
+    // Build GraphQL schema with Soroban client injected
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(db_pool.clone())
+        .data(soroban_client.clone())
+        .data(config.clone())
         .finish();
-    info!("GraphQL schema built");
+    info!("GraphQL schema built (with Soroban integration)");
 
     let host = config.host.clone();
     let port = config.port;

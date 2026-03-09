@@ -55,3 +55,9 @@ sha2 = "0.10"
 hex = "0.4"
 async-trait = "0.1"
 futures = "0.3"
+
+# Soroban / Stellar RPC interaction
+reqwest = { version = "0.12", features = ["json"] }
+stellar-xdr = { version = "23", features = ["curr", "std", "serde"] }
+stellar-strkey = "0.0.11"
+base64 = "0.22"

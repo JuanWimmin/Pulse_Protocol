@@ -26,5 +26,3 @@ lto = true
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true
-
-sha2 = "0.10"

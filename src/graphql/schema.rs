@@ -1,10 +1,17 @@
 use async_graphql::{Context, EmptySubscription, Object, Result, Schema};
 use sqlx::PgPool;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::types::*;
 use crate::auth::AuthenticatedUser;
+use crate::config::Config;
 use crate::models;
+use crate::services::aggregator;
+use crate::services::contracts::proof_of_life::ProofOfLifeContractClient;
+use crate::services::contracts::vault::VaultContractClient;
+use crate::services::publisher::Publisher;
+use crate::services::soroban::SorobanClient;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -163,17 +170,33 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
-    /// Create a new vault.
+    /// Create a new vault. If VAULT_CONTRACT_ID is set, also creates on-chain.
     async fn create_vault(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "input")] _input: CreateVaultInput,
+        #[graphql(name = "input")] input: CreateVaultInput,
     ) -> Result<Vault> {
         let pool = ctx.data::<PgPool>()?;
         let auth = ctx.data::<AuthenticatedUser>()?;
+        let config = ctx.data::<Config>()?;
+        let soroban = ctx.data::<SorobanClient>()?;
 
-        // Sprint 1: DB only. Sprint 2 adds on-chain create_vault + create_escrow.
+        // Create in DB first
         let vault = models::vault::Vault::create(pool, auth.user_id).await?;
+
+        // If contracts are deployed, create on-chain too
+        if let Some(ref contract_id) = config.vault_contract_id {
+            let client = VaultContractClient::new(contract_id, soroban.clone());
+            match client.create_vault(&auth.stellar_address, &input.token).await {
+                Ok(_vault_id) => {
+                    models::vault::Vault::set_contract_id(pool, vault.id, contract_id).await?;
+                    info!("Vault {} created on-chain", vault.id);
+                }
+                Err(e) => {
+                    warn!("On-chain create_vault failed (DB record kept): {}", e);
+                }
+            }
+        }
 
         Ok(Vault {
             id: vault.id,
@@ -293,6 +316,7 @@ impl MutationRoot {
     }
 
     /// Submit a proof-of-life verification.
+    /// Validates score, optionally publishes on-chain via oracle, persists to DB.
     async fn submit_verification(
         &self,
         ctx: &Context<'_>,
@@ -300,19 +324,50 @@ impl MutationRoot {
     ) -> Result<VerificationResult> {
         let pool = ctx.data::<PgPool>()?;
         let auth = ctx.data::<AuthenticatedUser>()?;
+        let config = ctx.data::<Config>()?;
+        let soroban = ctx.data::<SorobanClient>()?;
 
-        if input.perceptron_output < 0 || input.perceptron_output > 10000 {
-            return Err("perceptron_output must be in range [0, 10000]".into());
-        }
+        // Validate via aggregator
+        let validated = aggregator::validate_score(
+            &auth.stellar_address,
+            input.perceptron_output,
+            &input.source,
+        )
+        .map_err(|e| async_graphql::Error::new(e))?;
 
-        // Sprint 1: DB only. Sprint 2 signs + publishes on-chain via oracle.
+        // Try to publish on-chain if PoL contract and oracle key are configured
+        let tx_hash = if let (Some(ref pol_id), Some(ref secret)) =
+            (&config.proof_of_life_contract_id, &config.oracle_secret_key)
+        {
+            let pol_client = ProofOfLifeContractClient::new(pol_id, soroban.clone());
+            match Publisher::new(pol_client, secret) {
+                Ok(publisher) => match publisher.publish_score(&validated).await {
+                    Ok(hash) => {
+                        info!("Score published on-chain: tx={}", hash);
+                        Some(hash)
+                    }
+                    Err(e) => {
+                        warn!("On-chain publish failed (saving to DB anyway): {}", e);
+                        None
+                    }
+                },
+                Err(e) => {
+                    warn!("Publisher init failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Persist to DB
         let v = models::verification::Verification::create(
             pool,
             auth.user_id,
             input.perceptron_output,
             &input.source,
             Some(input.perceptron_output),
-            None,
+            tx_hash.as_deref(),
         )
         .await?;
 
@@ -359,25 +414,45 @@ impl MutationRoot {
     }
 
     /// Emergency check-in to reset liveness score.
+    /// Optionally calls emergency_checkin() on-chain.
     async fn emergency_checkin(&self, ctx: &Context<'_>) -> Result<CheckinResult> {
         let pool = ctx.data::<PgPool>()?;
         let auth = ctx.data::<AuthenticatedUser>()?;
+        let config = ctx.data::<Config>()?;
+        let soroban = ctx.data::<SorobanClient>()?;
 
-        // Sprint 1: DB only. Sprint 2 calls emergency_checkin() on-chain.
+        // Try on-chain emergency checkin
+        let tx_hash = if let Some(ref pol_id) = config.proof_of_life_contract_id {
+            let pol_client = ProofOfLifeContractClient::new(pol_id, soroban.clone());
+            match pol_client.emergency_checkin(&auth.stellar_address).await {
+                Ok(hash) => {
+                    info!("Emergency checkin on-chain: tx={}", hash);
+                    Some(hash)
+                }
+                Err(e) => {
+                    warn!("On-chain emergency checkin failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Persist to DB with max score
         let v = models::verification::Verification::create(
             pool,
             auth.user_id,
             10000,
             "emergency",
             None,
-            None,
+            tx_hash.as_deref(),
         )
         .await?;
 
         Ok(CheckinResult {
             success: true,
             new_score: v.score,
-            tx_hash: None,
+            tx_hash: v.on_chain_tx_hash,
         })
     }
 
@@ -425,6 +500,7 @@ impl MutationRoot {
     }
 
     /// Force vault state transition (admin/demo).
+    /// Optionally calls transition_status() on-chain.
     async fn force_transition(
         &self,
         ctx: &Context<'_>,
@@ -432,8 +508,28 @@ impl MutationRoot {
         new_status: VaultStatus,
     ) -> Result<Vault> {
         let pool = ctx.data::<PgPool>()?;
+        let config = ctx.data::<Config>()?;
+        let soroban = ctx.data::<SorobanClient>()?;
 
-        // Sprint 1: DB only. Sprint 2 calls transition_status() on-chain.
+        // Try on-chain transition if vault contract is configured
+        if let Some(ref contract_id) = config.vault_contract_id {
+            if let Some(addr) = soroban.oracle_address() {
+                let client = VaultContractClient::new(contract_id, soroban.clone());
+                let status_u32 = match new_status {
+                    VaultStatus::Active => 0,
+                    VaultStatus::Alert => 1,
+                    VaultStatus::GracePeriod => 2,
+                    VaultStatus::Triggered => 3,
+                    VaultStatus::Distributed => 4,
+                };
+                match client.transition_status(0, &addr, status_u32).await {
+                    Ok(hash) => info!("On-chain transition: tx={}", hash),
+                    Err(e) => warn!("On-chain transition failed: {}", e),
+                }
+            }
+        }
+
+        // Update DB
         let vault =
             models::vault::Vault::update_status(pool, vault_id, new_status.as_str()).await?;
 
