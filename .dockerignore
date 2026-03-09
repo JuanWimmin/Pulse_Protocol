@@ -1,0 +1,12 @@
+target/
+mobile/
+docs/
+.git/
+.github/
+*.md
+scripts/
+database/
+deployed_contracts.json
+.env
+.env.*
+!.env.example

@@ -1,7 +1,7 @@
 /// VaultDetailScreen — Shows vault balance, status, and beneficiary list.
 /// Navigates to ManageBeneficiariesScreen for editing.
 
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -9,9 +9,11 @@ import {
   ScrollView,
   ActivityIndicator,
   StyleSheet,
+  Alert,
 } from "react-native";
-import { useQuery } from "@apollo/client";
+import { useQuery, useMutation } from "@apollo/client";
 import { VAULT_QUERY } from "../services/graphql/queries";
+import { FORCE_TRANSITION } from "../services/graphql/mutations";
 
 type Props = {
   vaultId: string;
@@ -40,11 +42,27 @@ export default function VaultDetailScreen({
   onNavigateManageBeneficiaries,
   onGoBack,
 }: Props) {
-  const { data, loading } = useQuery(VAULT_QUERY, {
+  const { data, loading, refetch } = useQuery(VAULT_QUERY, {
     variables: { id: vaultId },
   });
+  const [forceTransition, { loading: transitioning }] = useMutation(FORCE_TRANSITION);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
 
   const vault = data?.vault;
+
+  const handleForceTransition = async (newStatus: string) => {
+    setTransitionError(null);
+    try {
+      await forceTransition({
+        variables: { vaultId, newStatus },
+      });
+      await refetch();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Transition failed";
+      setTransitionError(message);
+      Alert.alert("Transition Failed", message);
+    }
+  };
 
   if (loading) {
     return (
@@ -144,6 +162,38 @@ export default function VaultDetailScreen({
           )
         ) : (
           <Text style={styles.emptyText}>No beneficiaries set</Text>
+        )}
+      </View>
+
+      {/* Demo Controls — Force Transition */}
+      <View style={styles.card}>
+        <Text style={styles.cardLabel}>Demo Controls</Text>
+        <Text style={styles.demoHint}>
+          Force vault status transition for demo purposes
+        </Text>
+        <View style={styles.transitionRow}>
+          {["ACTIVE", "ALERT", "GRACE_PERIOD", "TRIGGERED"].map((status) => (
+            <TouchableOpacity
+              key={status}
+              style={[
+                styles.transitionBtn,
+                { backgroundColor: statusColor[status] ?? "#9E9E9E" },
+                vault.status === status && styles.transitionBtnDisabled,
+              ]}
+              onPress={() => handleForceTransition(status)}
+              disabled={vault.status === status || transitioning}
+            >
+              <Text style={styles.transitionBtnText}>
+                {statusLabel[status] ?? status}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {transitioning && (
+          <ActivityIndicator size="small" color="#6200EE" style={{ marginTop: 8 }} />
+        )}
+        {transitionError && (
+          <Text style={styles.transitionError}>{transitionError}</Text>
         )}
       </View>
 
@@ -270,6 +320,35 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 14,
     color: "#212121",
+  },
+  demoHint: {
+    fontSize: 12,
+    color: "#BDBDBD",
+    fontStyle: "italic",
+    marginBottom: 12,
+  },
+  transitionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  transitionBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  transitionBtnDisabled: {
+    opacity: 0.3,
+  },
+  transitionBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  transitionError: {
+    fontSize: 12,
+    color: "#F44336",
+    marginTop: 8,
   },
   errorText: {
     fontSize: 16,
